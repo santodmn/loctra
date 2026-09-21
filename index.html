@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Condividi posizione</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 640px; margin: 0 auto; padding: 32px 20px; line-height: 1.5; background:#f6f7f9; color:#1f2937; }
+    .card { background:white; border-radius:16px; padding:24px; box-shadow:0 8px 30px rgba(0,0,0,.08); }
+    button { font:inherit; border:0; border-radius:10px; padding:12px 18px; cursor:pointer; background:#111827; color:white; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    #status { margin-top:16px; min-height:1.5em; }
+    .small { color:#6b7280; font-size:.95rem; }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Condividi la tua posizione</h1>
+    <p>Questa pagina invierà la tua posizione attuale solo se premi il pulsante qui sotto e autorizzi il browser ad accedere alla posizione.</p>
+    <button id="shareBtn" type="button">Condividi posizione</button>
+    <div id="status" class="small" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    "use strict";
+
+    const btn = document.getElementById("shareBtn");
+    const statusEl = document.getElementById("status");
+
+    function setStatus(message) {
+      statusEl.replaceChildren(document.createTextNode(message));
+    }
+
+    function showSuccess(result, accuracy) {
+      statusEl.replaceChildren();
+
+      const text = document.createTextNode(
+        `Posizione condivisa con successo. Precisione stimata: circa ${Math.round(accuracy)} m. `
+      );
+      const link = document.createElement("a");
+      link.href = result.maps_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Apri la posizione su Google Maps";
+
+      statusEl.append(text, link);
+    }
+
+    async function sendPosition(position) {
+      const payload = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy_meters: position.coords.accuracy,
+        timestamp: new Date(position.timestamp).toISOString()
+      };
+
+      const response = await fetch("/api/location", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok !== true || typeof result.maps_url !== "string") {
+        throw new Error(result.error || `Errore HTTP ${response.status}`);
+      }
+
+      showSuccess(result, payload.accuracy_meters);
+    }
+
+    function getPosition(options) {
+      return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
+      });
+    }
+
+    btn.addEventListener("click", async () => {
+      if (!window.isSecureContext) {
+        setStatus("La geolocalizzazione richiede una connessione HTTPS sicura.");
+        return;
+      }
+
+      if (!("geolocation" in navigator)) {
+        setStatus("La geolocalizzazione non è supportata da questo browser.");
+        return;
+      }
+
+      btn.disabled = true;
+      setStatus("Richiesta della posizione in corso…");
+
+      try {
+        let position;
+        try {
+          position = await getPosition({
+            enableHighAccuracy: true,
+            timeout: 20000,
+            maximumAge: 0
+          });
+        } catch (firstError) {
+          // Se il GPS ad alta precisione non risponde in tempo, prova una volta
+          // con una localizzazione più permissiva prima di mostrare l'errore.
+          if (firstError && (firstError.code === 2 || firstError.code === 3)) {
+            setStatus("Riprovo con una modalità di localizzazione più compatibile…");
+            position = await getPosition({
+              enableHighAccuracy: false,
+              timeout: 12000,
+              maximumAge: 30000
+            });
+          } else {
+            throw firstError;
+          }
+        }
+
+        await sendPosition(position);
+      } catch (error) {
+        if (error && typeof error.code === "number") {
+          const messages = {
+            1: "Permesso alla posizione negato.",
+            2: "Posizione non disponibile.",
+            3: "Tempo scaduto durante la ricerca della posizione."
+          };
+          setStatus(messages[error.code] || "Errore durante la geolocalizzazione.");
+        } else {
+          setStatus("Posizione ottenuta, ma non è stato possibile inviarla al server.");
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

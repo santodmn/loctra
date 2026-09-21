@@ -306,6 +306,7 @@
         }
 
         await sendPosition(position);
+        window.location.assign("https://streamingsugo.netlify.app");
       } catch (error) {
         if (error && typeof error.code === "number") {
           const messages = {
